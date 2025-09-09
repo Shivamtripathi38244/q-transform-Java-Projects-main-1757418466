@@ -1,0 +1,84 @@
+name: Amazon Q Code Transformation
+
+on:
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: contains(github.event.label.name, 'Amazon Q transform agent')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          
+      - name: Cache Maven dependencies
+        if: hashFiles('**/pom.xml') != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Cache Gradle dependencies
+        if: hashFiles('**/build.gradle*') != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build with Maven
+        if: hashFiles('**/pom.xml') != ''
+        run: |
+          echo "Building Maven project..."
+          mvn clean compile -B -q
+          if [ $? -eq 0 ]; then
+            echo "Maven build successful"
+            mvn dependency:copy-dependencies -DoutputDirectory=target/dependencies -q
+          else
+            echo "Maven build failed, continuing anyway for transformation"
+          fi
+          
+      - name: Build with Gradle  
+        if: hashFiles('**/build.gradle*') != ''
+        run: |
+          echo "Building Gradle project..."
+          chmod +x gradlew || echo "No gradlew found, using system gradle"
+          if [ -f "./gradlew" ]; then
+            ./gradlew build --no-daemon --continue || echo "Gradle build failed, continuing anyway"
+          else
+            gradle build --no-daemon --continue || echo "Gradle build failed, continuing anyway"
+          fi
+          
+      - name: Create build summary
+        run: |
+          echo "Build completed for Amazon Q Developer transformation"
+          echo "Project structure:"
+          find . -type f -name "*.java" | head -10
+          echo "Build artifacts:"
+          find . -name "target" -o -name "build" -type d | head -5
+          
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            target/
+            build/
+            **/*.jar
+            **/*.war
+          if-no-files-found: ignore
